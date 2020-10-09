@@ -1,0 +1,171 @@
+---
+# TODO: Explore new `session_local`, etc. features
+---
+include:
+  # The order has to be this way to show proxy signature text
+  # correctly, but this behavior is hidden. Maybe better to
+  # handle it in basic-questions itself? Will have to work out
+  # other defaults that are currently being overriden.
+  - docassemble.MAVirtualCourt:basic-questions.yml
+  - sign_on_device.yml
+  - signer.yml
+---
+metadata:
+  title: Cosigners
+---
+mandatory: True
+code: |
+  multi_user = True
+---
+modules:
+  - docassemble.base.util
+---
+objects:
+  - codefendants: PeopleList.using(complete_attribute='complete')
+---
+comment: |
+  Predefine some variables we need
+code: |
+  interview_short_title = 'Cosigners'  # Will be easier to switch to basic questions in future. Can be moved into its own block.
+  allowed_courts = [
+    "Housing Court",    
+    "Boston Municipal Court",
+    "District Court",
+    "Superior Court",
+  ]
+  preferred_court = "Housing Court"
+  #other_parties.there_are_any = True
+  user_role = 'defendant'
+  interview_presets = True
+---
+mandatory: True
+id: interview order
+code: |
+  interview_presets
+  
+  # Skipping for speeding up tests
+  #users[0].name.first = 'd'
+  #users[0].name.last = 'd'
+  #codefendants[0].name.first = 'c'
+  #codefendants[1].name.first = 'f'
+  #codefendants[2].name.first = 's'
+  #preview_screen = True
+  
+  # Real code
+  users[0].name.first
+  users[0].mobile_number
+  users.gathered = True
+  users.there_is_another = False
+  
+  codefendants.gather()
+  # Set signers that will sign on this device or not
+  collect_signer_types # It would be nice if this didn't have to be in here
+  
+  preview_screen  # Must define form_to_sign
+  users[0].sign_on_device
+---
+# DEVELOPER: Cosigner functionality needs this
+code: |
+  codefendants[i].get_signature_info
+  codefendants[i].complete = True
+---
+# DEVELOPER: Cosigner functionality needs this
+code: |
+  other_signers = codefendants
+  # Can't be abstracted in case other signers need to be included.
+  all_signers = users + other_signers
+---
+# DEVELOPER: Cosigner functionality gives you this
+event: x.after_other_signers_signatures_sought
+generic object: Individual
+code: |
+  users[0].status
+---
+id: preview
+reconsider:
+  - form_to_sign
+question: |
+  Preview your document
+subquestion: |
+
+  Tap the document below to open it in a new window.
+  
+  Use the "Back" button to find the screen to fix mistakes.
+  
+  ${ form_to_sign }
+continue button field: preview_screen
+---
+code: |
+  form_to_sign = pdf_concatenate(preview_doc, filename="unsigned-signatures-doc.pdf")
+  # TODO: Discuss if this should always be set or not
+  form_to_sign.set_attributes(private=False, persistent=True)
+---
+attachment:
+  docx template file: test_signatures.docx
+  variable name: preview_doc
+---
+# invalidates values so it will be recalculated when it is used. It's under-used so may have some bugs. It's conceptually the right feature to use.
+reconsider:
+  - signatures_doc
+# will reconsider on every page load on a page where it's referenced. But PDFs take a long time.
+# reconsider: True
+code: |
+  final_form = pdf_concatenate(signatures_doc, filename="final-signatures-doc.pdf") #cover_page, filename="final-signatures-doc.pdf")
+  final_form.set_attributes(private=False, persistent=True)
+---
+attachment: 
+  docx template file: test_signatures.docx
+  variable name: signatures_doc  
+  filename: signatures-doc
+  name: All signatures
+---
+#---------------------
+# Data store
+---
+code: |
+  # When the saved redis data will expire: days * hours * minutes * seconds
+  # https://docassemble.org/docs/objects.html#DARedis
+  remote_siganure_expiration_ms = 1 * 24 * 60 * 60  # 1 day
+---
+# DEVELOPER: (for other_signers) Triggered by user following the link in a notification about other signer's behavior. `action` allows check for authorization.
+event: check_status
+code: |
+  if action_argument('party_id') == users[0].id:
+    users[0].status
+  else:
+    unauthorized
+---
+id: 404
+event: unauthorized
+code: |
+  response('Page not found', response_code=404)
+---
+#################
+# Interview-specific UI
+#################
+---
+####
+# Each variable is a chunk of text. Be aware of the `if` statements and move things around as you see fit.
+id: signature status and download
+event: users[0].status
+reconsider:
+  - get_stored_data
+  - collect_signer_types
+  - unwilling_other_signers
+  - all_signatures_in
+  - signatures_doc  # DAFileCollection
+  - final_form  # DAFile
+question: |
+  % if all_signatures_in:
+  Your document is ready
+  % else:
+  Some people still need to sign your document
+  % endif
+subquestion: |
+
+  ${ other_signers_status_section }
+
+buttons:
+  - Restart: restart
+  
+attachment code: signatures_doc
